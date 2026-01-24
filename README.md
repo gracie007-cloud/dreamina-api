@@ -218,6 +218,10 @@ curl https://your-worker.workers.dev/v1/models
 - ⚙️ 生成设置：模型选择、图片比例、分辨率、精细度调整
 - 🖼️ 结果展示：实时进度显示、查看大图、一键下载
 
+部分界面展示：
+<img width="1546" height="709" alt="image" src="https://github.com/user-attachments/assets/c2ee5158-3ce2-42d7-841f-355b4d3df216" />
+<img width="1490" height="781" alt="image" src="https://github.com/user-attachments/assets/fdf66f21-ff91-4146-a783-5c905b2a7949" />
+
 ## 注意事项
 
 1. **Token 有效期**：Session ID 有一定有效期，过期后需要重新获取

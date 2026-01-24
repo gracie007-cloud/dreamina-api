@@ -220,7 +220,7 @@ curl -X GET https://your-worker.workers.dev/v1/images/tasks/xxx \\
     </table>
 
     <div class="footer">
-      <p>Powered by Cloudflare Workers</p>
+      <p>A嘉技术</p>
     </div>
   </div>
 </body>

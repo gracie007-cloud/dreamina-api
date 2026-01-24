@@ -569,7 +569,7 @@ export const uiHtml = `<!DOCTYPE html>
     </div>
     
     <footer class="footer">
-      <p>Powered by Cloudflare Workers | 基于 <a href="https://github.com/dongshuyan/dreamina2api" target="_blank">dreamina2api</a> 重构</p>
+      <p>A嘉技术 | 基于 <a href="https://github.com/dongshuyan/dreamina2api" target="_blank">dreamina2api</a> 重构</p>
       <p style="margin-top: 8px;">⚠️ 请合理使用，遵守相关法律法规</p>
     </footer>
   </div>

@@ -1,0 +1,25 @@
+{
+  "name": "dreamina-workers",
+  "version": "1.0.0",
+  "description": "Dreamina API for Cloudflare Workers - 即梦海外版图像生成 API",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "keywords": [
+    "dreamina",
+    "capcut",
+    "ai",
+    "image-generation",
+    "cloudflare-workers"
+  ],
+  "author": "A嘉技术",
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240117.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^3.25.0"
+  }
+}

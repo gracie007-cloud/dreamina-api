@@ -4,6 +4,8 @@
 
 即梦海外版 | Dreamina (CapCut AI) 图像生成 API | 基于 Cloudflare Workers 部署
 
+在线示例：https://j.aisk.de5.net
+
 ## 功能特性
 
 - ✅ **异步任务模式** - 提交任务后轮询状态，避免超时
@@ -219,7 +221,10 @@ curl https://your-worker.workers.dev/v1/models
 - 🖼️ 结果展示：实时进度显示、查看大图、一键下载
 
 部分界面展示：
-<img width="1546" height="709" alt="image" src="https://github.com/user-attachments/assets/c2ee5158-3ce2-42d7-841f-355b4d3df216" />
+<img width="1547" height="729" alt="image" src="https://github.com/user-attachments/assets/8e2dfcd5-05f4-4a30-a564-2d1045aff102" />
+
+<img width="1547" height="733" alt="image" src="https://github.com/user-attachments/assets/891a808b-31a0-4821-b6aa-0395134515bb" />
+
 <img width="1490" height="781" alt="image" src="https://github.com/user-attachments/assets/fdf66f21-ff91-4146-a783-5c905b2a7949" />
 
 ## 注意事项

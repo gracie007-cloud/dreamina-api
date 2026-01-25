@@ -348,6 +348,93 @@ export const uiHtml = `<!DOCTYPE html>
       margin-bottom: 20px;
     }
     
+    .mode-tabs {
+      display: flex;
+      gap: 0;
+      background: var(--bg-input);
+      border-radius: 8px;
+      padding: 4px;
+    }
+    
+    .mode-tab {
+      flex: 1;
+      padding: 10px 16px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .mode-tab:hover {
+      color: var(--text);
+    }
+    
+    .mode-tab.active {
+      background: var(--primary);
+      color: white;
+    }
+    
+    .image-upload-area {
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 30px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .image-upload-area:hover {
+      border-color: var(--primary);
+      background: rgba(99, 102, 241, 0.05);
+    }
+    
+    .upload-placeholder {
+      color: var(--text-muted);
+    }
+    
+    .uploaded-images {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 15px;
+    }
+    
+    .uploaded-image-item {
+      position: relative;
+      width: 80px;
+      height: 80px;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 2px solid var(--border);
+    }
+    
+    .uploaded-image-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    
+    .uploaded-image-item .remove-img-btn {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--danger);
+      color: white;
+      border: none;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    
     .ratio-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -499,6 +586,32 @@ export const uiHtml = `<!DOCTYPE html>
           </div>
           
           <div class="form-group">
+            <label>生成模式</label>
+            <div class="mode-tabs">
+              <button type="button" class="mode-tab active" data-mode="text2img" onclick="switchMode('text2img')">文生图</button>
+              <button type="button" class="mode-tab" data-mode="img2img" onclick="switchMode('img2img')">图生图</button>
+            </div>
+          </div>
+          
+          <div id="img2imgSection" style="display: none;">
+            <div class="form-group">
+              <label>参考图片 (支持 1-10 张)</label>
+              <div class="image-upload-area" id="imageUploadArea">
+                <div class="upload-placeholder" onclick="document.getElementById('imageInput').click()">
+                  <span style="font-size: 2em;">🖼️</span>
+                  <p>点击添加图片或输入图片 URL</p>
+                </div>
+                <input type="file" id="imageInput" accept="image/*" multiple style="display: none;" onchange="handleImageUpload(event)">
+              </div>
+              <div class="uploaded-images" id="uploadedImages"></div>
+              <div class="token-input-group" style="margin-top: 10px;">
+                <input type="text" id="imageUrlInput" placeholder="输入图片 URL...">
+                <button type="button" class="btn-secondary" onclick="addImageUrl()">添加</button>
+              </div>
+            </div>
+          </div>
+          
+          <div class="form-group">
             <label>提示词 (Prompt)</label>
             <textarea id="prompt" placeholder="描述你想要生成的图片内容...&#10;例如：一只可爱的橘猫在阳光下打盹，柔和的光线，高清摄影"></textarea>
           </div>
@@ -569,7 +682,7 @@ export const uiHtml = `<!DOCTYPE html>
     </div>
     
     <footer class="footer">
-      <p>A嘉技术 | 项目地址 <a href="https://github.com/LiJunYi2/dreamina-api" target="_blank">dreamina2api</a>Github</p>
+    <p>A嘉技术 | 项目 <a href="https://github.com/LiJunYi2/dreamina-api" target="_blank">Github</a></p>
       <p style="margin-top: 8px;">⚠️ 请合理使用，遵守相关法律法规</p>
     </footer>
   </div>
@@ -585,6 +698,100 @@ export const uiHtml = `<!DOCTYPE html>
     let tokens = [];
     let selectedRatio = '1:1';
     let isGenerating = false;
+    let currentMode = 'text2img';
+    let uploadedImages = []; // 存储上传的图片 URL
+    
+    // 切换生成模式
+    function switchMode(mode) {
+      currentMode = mode;
+      document.querySelectorAll('.mode-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.mode === mode);
+      });
+      document.getElementById('img2imgSection').style.display = mode === 'img2img' ? 'block' : 'none';
+      
+      // 更新按钮文本
+      const btn = document.getElementById('generateBtn');
+      btn.textContent = mode === 'text2img' ? '✨ 生成图片' : '✨ 图生图';
+    }
+    
+    // 处理图片上传
+    function handleImageUpload(event) {
+      const files = event.target.files;
+      if (!files || files.length === 0) return;
+      
+      for (let i = 0; i < files.length; i++) {
+        if (uploadedImages.length >= 10) {
+          showError('最多支持 10 张图片');
+          break;
+        }
+        
+        const file = files[i];
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          uploadedImages.push({
+            type: 'base64',
+            data: e.target.result,
+            name: file.name
+          });
+          renderUploadedImages();
+        };
+        reader.readAsDataURL(file);
+      }
+      
+      // 清空 input
+      event.target.value = '';
+    }
+    
+    // 添加图片 URL
+    function addImageUrl() {
+      const input = document.getElementById('imageUrlInput');
+      const url = input.value.trim();
+      
+      if (!url) {
+        showError('请输入图片 URL');
+        return;
+      }
+      
+      if (uploadedImages.length >= 10) {
+        showError('最多支持 10 张图片');
+        return;
+      }
+      
+      // 简单验证 URL 格式
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        showError('请输入有效的图片 URL');
+        return;
+      }
+      
+      uploadedImages.push({
+        type: 'url',
+        data: url,
+        name: url.split('/').pop() || 'image'
+      });
+      renderUploadedImages();
+      input.value = '';
+      hideError();
+    }
+    
+    // 删除上传的图片
+    function removeUploadedImage(index) {
+      uploadedImages.splice(index, 1);
+      renderUploadedImages();
+    }
+    
+    // 渲染上传的图片列表
+    function renderUploadedImages() {
+      const container = document.getElementById('uploadedImages');
+      if (uploadedImages.length === 0) {
+        container.innerHTML = '';
+        return;
+      }
+      
+      container.innerHTML = uploadedImages.map((img, index) => {
+        const src = img.type === 'base64' ? img.data : img.data;
+        return '<div class="uploaded-image-item"><img src="' + src + '" alt="' + img.name + '"><button type="button" class="remove-img-btn" onclick="removeUploadedImage(' + index + ')">×</button></div>';
+      }).join('');
+    }
     
     // 从 localStorage 加载 tokens
     function loadTokens() {
@@ -706,6 +913,12 @@ export const uiHtml = `<!DOCTYPE html>
         return;
       }
       
+      // 图生图模式检查
+      if (currentMode === 'img2img' && uploadedImages.length === 0) {
+        showError('请至少添加一张参考图片');
+        return;
+      }
+      
       const model = document.getElementById('model').value;
       const negativePrompt = document.getElementById('negativePrompt').value.trim();
       const sampleStrength = parseFloat(document.getElementById('sampleStrength').value);
@@ -720,20 +933,31 @@ export const uiHtml = `<!DOCTYPE html>
       document.getElementById('resultsContainer').innerHTML = '<div class="status loading"><div class="icon">⏳</div><h3>正在提交任务...</h3><p>请稍候</p></div>';
       
       try {
+        // 根据模式选择 API 端点
+        const apiEndpoint = currentMode === 'img2img' ? '/v1/images/compositions' : '/v1/images/generations';
+        
+        // 构建请求体
+        const requestBody = {
+          prompt,
+          model,
+          ratio: selectedRatio,
+          negative_prompt: negativePrompt || undefined,
+          sample_strength: sampleStrength
+        };
+        
+        // 图生图模式添加图片
+        if (currentMode === 'img2img') {
+          requestBody.images = uploadedImages.map(img => img.data);
+        }
+        
         // 提交生成任务
-        const response = await fetch('/v1/images/generations', {
+        const response = await fetch(apiEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer ' + token
           },
-          body: JSON.stringify({
-            prompt,
-            model,
-            ratio: selectedRatio,
-            negative_prompt: negativePrompt || undefined,
-            sample_strength: sampleStrength
-          })
+          body: JSON.stringify(requestBody)
         });
         
         const data = await response.json();
@@ -886,6 +1110,10 @@ export const uiHtml = `<!DOCTYPE html>
     window.openLightbox = openLightbox;
     window.closeLightbox = closeLightbox;
     window.downloadImage = downloadImage;
+    window.switchMode = switchMode;
+    window.handleImageUpload = handleImageUpload;
+    window.addImageUrl = addImageUrl;
+    window.removeUploadedImage = removeUploadedImage;
     
     // 初始化
     loadTokens();

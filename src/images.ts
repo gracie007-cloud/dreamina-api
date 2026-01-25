@@ -16,7 +16,8 @@ import {
   DRAFT_MIN_VERSION,
   RegionInfo,
 } from './consts';
-import { uuid } from './utils';
+import { uuid, calculateCRC32 } from './utils';
+import { createSignature } from './aws-signature';
 
 /**
  * 任务状态
@@ -78,17 +79,9 @@ function resolveResolution(
  */
 function getBenefitCount(userModel: string, regionInfo: RegionInfo): number | undefined {
   if (regionInfo.isCN) return undefined;
-
-  if (regionInfo.isUS) {
-    return ["jimeng-4.5", "jimeng-4.0", "jimeng-3.0", "dreamina-4.5", "dreamina-4.0"].includes(userModel) ? 4 : undefined;
-  }
-
-  if (regionInfo.isHK || regionInfo.isJP || regionInfo.isSG) {
-    if (userModel === "nanobanana") return undefined;
-    return 4;
-  }
-
-  return undefined;
+  if (regionInfo.isUS) return 4;
+  // HK/JP/SG
+  return 4;
 }
 
 /**
@@ -98,27 +91,21 @@ function buildCoreParam(options: {
   model: string;
   prompt: string;
   negativePrompt?: string;
-  seed?: number;
+  seed: number;
   sampleStrength: number;
   resolution: { width: number; height: number; imageRatio: number; resolutionType: string };
   intelligentRatio?: boolean;
 }): any {
-  const {
-    model,
-    prompt,
-    negativePrompt,
-    seed,
-    sampleStrength,
-    resolution,
-    intelligentRatio = false,
-  } = options;
+  const { model, prompt, negativePrompt, seed, sampleStrength, resolution, intelligentRatio } = options;
 
   const coreParam: any = {
     type: "",
     id: uuid(),
     model,
     prompt,
+    seed,
     sample_strength: sampleStrength,
+    image_ratio: resolution.imageRatio,
     large_image_info: {
       type: "",
       id: uuid(),
@@ -127,19 +114,11 @@ function buildCoreParam(options: {
       width: resolution.width,
       resolution_type: resolution.resolutionType,
     },
-    intelligent_ratio: intelligentRatio,
+    intelligent_ratio: intelligentRatio || false,
   };
-
-  if (!intelligentRatio) {
-    coreParam.image_ratio = resolution.imageRatio;
-  }
 
   if (negativePrompt) {
     coreParam.negative_prompt = negativePrompt;
-  }
-
-  if (seed !== undefined) {
-    coreParam.seed = seed;
   }
 
   return coreParam;
@@ -155,14 +134,14 @@ function buildMetricsExtra(options: {
   resolutionType: string;
 }): string {
   const { userModel, regionInfo, submitId, resolutionType } = options;
+
   const benefitCount = getBenefitCount(userModel, regionInfo);
 
   const sceneOption: any = {
     type: "image",
     scene: "ImageBasicGenerate",
     modelReqKey: userModel,
-    resolutionType,
-    abilityList: [],
+    resolutionType: resolutionType,
     reportParams: {
       enterSource: "generate",
       vipSource: "generate",
@@ -175,16 +154,14 @@ function buildMetricsExtra(options: {
     sceneOption.benefitCount = benefitCount;
   }
 
-  const metrics: any = {
+  return JSON.stringify({
     promptSource: "custom",
     generateCount: 1,
     enterFrom: "click",
     sceneOptions: JSON.stringify([sceneOption]),
     generateId: submitId,
     isRegenerate: false,
-  };
-
-  return JSON.stringify(metrics);
+  });
 }
 
 /**
@@ -460,6 +437,261 @@ function extractImageUrls(itemList: any[]): string[] {
 }
 
 /**
+ * 获取区域相关配置
+ * 基于 jimeng-api 项目的 region-utils.ts 和 dreamina.ts
+ */
+function getRegionConfig(regionInfo: RegionInfo) {
+  if (regionInfo.isUS) {
+    return {
+      imageXUrl: 'https://imagex16-normal-us-ttp.capcutapi.us',
+      awsRegion: 'us-east-1',
+      origin: 'https://dreamina.capcut.com',
+      serviceId: 'wopfjsm1ax',
+    };
+  } else if (regionInfo.isHK || regionInfo.isJP || regionInfo.isSG) {
+    return {
+      imageXUrl: 'https://imagex-normal-sg.capcutapi.com',
+      awsRegion: 'ap-southeast-1',
+      origin: 'https://dreamina.capcut.com',
+      serviceId: 'wopfjsm1ax',
+    };
+  } else {
+    return {
+      imageXUrl: 'https://imagex.bytedanceapi.com',
+      awsRegion: 'cn-north-1',
+      origin: 'https://jimeng.jianying.com',
+      serviceId: 'tb4s082cfz',
+    };
+  }
+}
+
+/**
+ * 从 URL 或 Base64 上传图片
+ */
+async function uploadImage(imageData: string, refreshToken: string): Promise<string> {
+  const regionInfo = parseRegionFromToken(refreshToken);
+  
+  let imageBuffer: ArrayBuffer;
+  let contentType = 'image/jpeg';
+  
+  // 判断是 URL 还是 Base64
+  if (imageData.startsWith('data:')) {
+    // Base64 格式
+    const matches = imageData.match(/^data:([^;]+);base64,(.+)$/);
+    if (!matches) {
+      throw new Error('无效的 Base64 图片格式');
+    }
+    contentType = matches[1];
+    const base64Data = matches[2];
+    // 将 Base64 转换为 ArrayBuffer
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    imageBuffer = bytes.buffer;
+  } else {
+    // URL 格式 - 下载图片
+    console.log(`下载图片: ${imageData.substring(0, 100)}...`);
+    const response = await fetch(imageData);
+    if (!response.ok) {
+      throw new Error(`下载图片失败: ${response.status}`);
+    }
+    imageBuffer = await response.arrayBuffer();
+    contentType = response.headers.get('content-type') || 'image/jpeg';
+  }
+
+  console.log(`开始上传图片... (大小: ${imageBuffer.byteLength} 字节)`);
+
+  // 第一步：获取上传令牌
+  const tokenResult = await request("post", "/mweb/v1/get_upload_token", refreshToken, {
+    data: {
+      scene: 2, // AIGC 图片上传场景
+    },
+  });
+
+  const { access_key_id, secret_access_key, session_token } = tokenResult;
+  const service_id = regionInfo.isInternational ? tokenResult.space_name : tokenResult.service_id;
+  
+  if (!access_key_id || !secret_access_key || !session_token) {
+    throw new Error("获取上传令牌失败");
+  }
+
+  const regionConfig = getRegionConfig(regionInfo);
+  const actualServiceId = service_id || regionConfig.serviceId;
+  
+  console.log(`获取上传令牌成功: service_id=${actualServiceId}`);
+
+  // 准备文件信息
+  const fileSize = imageBuffer.byteLength;
+  const crc32 = calculateCRC32(imageBuffer);
+  console.log(`图片信息: 大小=${fileSize}字节, CRC32=${crc32}`);
+
+  // 第二步：申请图片上传权限
+  const now = new Date();
+  const timestamp = now.toISOString().replace(/[:\-]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const randomStr = Math.random().toString(36).substring(2, 12);
+  
+  const applyUrl = `${regionConfig.imageXUrl}/?Action=ApplyImageUpload&Version=2018-08-01&ServiceId=${actualServiceId}&FileSize=${fileSize}&s=${randomStr}${regionInfo.isInternational ? '&device_platform=web' : ''}`;
+
+  const requestHeaders: Record<string, string> = {
+    'x-amz-date': timestamp,
+    'x-amz-security-token': session_token
+  };
+
+  const authorization = await createSignature(
+    'GET',
+    applyUrl,
+    requestHeaders,
+    access_key_id,
+    secret_access_key,
+    session_token,
+    '',
+    regionConfig.awsRegion
+  );
+
+  console.log(`申请上传权限: ${applyUrl}`);
+
+  const applyResponse = await fetch(applyUrl, {
+    method: 'GET',
+    headers: {
+      'accept': '*/*',
+      'accept-language': 'zh-CN,zh;q=0.9',
+      'authorization': authorization,
+      'origin': regionConfig.origin,
+      'referer': `${regionConfig.origin}/ai-tool/generate`,
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+      'x-amz-date': timestamp,
+      'x-amz-security-token': session_token,
+    },
+  });
+
+  if (!applyResponse.ok) {
+    const errorText = await applyResponse.text();
+    throw new Error(`申请上传权限失败: ${applyResponse.status} - ${errorText}`);
+  }
+
+  const applyResult = await applyResponse.json() as any;
+  
+  if (applyResult?.ResponseMetadata?.Error) {
+    throw new Error(`申请上传权限失败: ${JSON.stringify(applyResult.ResponseMetadata.Error)}`);
+  }
+
+  console.log(`申请上传权限成功`);
+
+  // 解析上传信息
+  const uploadAddress = applyResult?.Result?.UploadAddress;
+  if (!uploadAddress || !uploadAddress.StoreInfos || !uploadAddress.UploadHosts) {
+    throw new Error(`获取上传地址失败: ${JSON.stringify(applyResult)}`);
+  }
+
+  const storeInfo = uploadAddress.StoreInfos[0];
+  const uploadHost = uploadAddress.UploadHosts[0];
+  const auth = storeInfo.Auth;
+  const uploadUrl = `https://${uploadHost}/upload/v1/${storeInfo.StoreUri}`;
+
+  console.log(`准备上传图片: uploadUrl=${uploadUrl}`);
+
+  // 第三步：上传图片文件
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Accept': '*/*',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      'Authorization': auth,
+      'Content-CRC32': crc32,
+      'Content-Disposition': 'attachment; filename="image.jpg"',
+      'Content-Type': 'application/octet-stream',
+      'Origin': regionConfig.origin,
+      'Referer': `${regionConfig.origin}/ai-tool/generate`,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+    },
+    body: imageBuffer,
+  });
+
+  if (!uploadResponse.ok) {
+    const errorText = await uploadResponse.text();
+    throw new Error(`上传图片失败: ${uploadResponse.status} - ${errorText}`);
+  }
+
+  const uploadResult = await uploadResponse.json() as any;
+  
+  // 检查上传结果 - 成功时 code=2000, message="Success"
+  if (uploadResult.code !== 2000 && uploadResult.message !== 'Success') {
+    throw new Error(`上传图片失败: ${JSON.stringify(uploadResult)}`);
+  }
+  
+  console.log(`图片文件上传成功, CRC32: ${uploadResult.data?.crc32}`);
+
+  // 第四步：提交上传完成
+  const commitUrl = `${regionConfig.imageXUrl}/?Action=CommitImageUpload&Version=2018-08-01&ServiceId=${actualServiceId}${regionInfo.isInternational ? '&device_platform=web' : ''}`;
+
+  const commitTimestamp = new Date().toISOString().replace(/[:\-]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  
+  // 按照 jimeng-api 的方式，使用 JSON body 传递 SessionKey
+  const commitPayload = JSON.stringify({
+    SessionKey: uploadAddress.SessionKey
+  });
+  
+  // 计算 payload hash
+  const payloadHashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(commitPayload));
+  const payloadHash = Array.from(new Uint8Array(payloadHashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  const commitHeaders: Record<string, string> = {
+    'x-amz-date': commitTimestamp,
+    'x-amz-security-token': session_token,
+    'x-amz-content-sha256': payloadHash
+  };
+
+  const commitAuthorization = await createSignature(
+    'POST',
+    commitUrl,
+    commitHeaders,
+    access_key_id,
+    secret_access_key,
+    session_token,
+    commitPayload,
+    regionConfig.awsRegion
+  );
+
+  const commitResponse = await fetch(commitUrl, {
+    method: 'POST',
+    headers: {
+      'accept': '*/*',
+      'accept-language': 'zh-CN,zh;q=0.9',
+      'authorization': commitAuthorization,
+      'content-type': 'application/json',
+      'origin': regionConfig.origin,
+      'referer': `${regionConfig.origin}/ai-tool/generate`,
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+      'x-amz-date': commitTimestamp,
+      'x-amz-security-token': session_token,
+      'x-amz-content-sha256': payloadHash,
+    },
+    body: commitPayload,
+  });
+
+  if (!commitResponse.ok) {
+    const errorText = await commitResponse.text();
+    throw new Error(`提交上传失败: ${commitResponse.status} - ${errorText}`);
+  }
+
+  const commitResult = await commitResponse.json() as any;
+  
+  if (commitResult?.ResponseMetadata?.Error) {
+    throw new Error(`提交上传失败: ${JSON.stringify(commitResult.ResponseMetadata.Error)}`);
+  }
+
+  const imageUri = commitResult?.Result?.PluginResult?.[0]?.ImageUri;
+  if (!imageUri) {
+    throw new Error(`获取图片URI失败: ${JSON.stringify(commitResult)}`);
+  }
+
+  console.log(`图片上传成功: ${imageUri}`);
+  return imageUri;
+}
+
+/**
  * 提交图生图任务（异步模式）
  */
 export async function submitCompositionTask(
@@ -496,7 +728,7 @@ export async function submitCompositionTask(
   const uploadedImageIds: string[] = [];
   for (let i = 0; i < imageUrls.length; i++) {
     try {
-      const imageId = await uploadImageFromUrl(imageUrls[i], refreshToken);
+      const imageId = await uploadImage(imageUrls[i], refreshToken);
       uploadedImageIds.push(imageId);
       console.log(`图片 ${i + 1}/${imageCount} 上传成功: ${imageId}`);
     } catch (error: any) {
@@ -683,56 +915,6 @@ export async function submitCompositionTask(
 }
 
 /**
- * 从 URL 上传图片
- */
-async function uploadImageFromUrl(imageUrl: string, refreshToken: string): Promise<string> {
-  // 下载图片
-  const response = await fetch(imageUrl);
-  if (!response.ok) {
-    throw new Error(`下载图片失败: ${response.status}`);
-  }
-  
-  const imageBuffer = await response.arrayBuffer();
-  const contentType = response.headers.get('content-type') || 'image/jpeg';
-  
-  // 获取上传凭证
-  const uploadResult = await request("get", "/mweb/v1/upload_token", refreshToken, {
-    params: {
-      scene: "aigc_upload",
-      file_count: 1,
-    },
-  });
-
-  const uploadInfo = uploadResult.upload_info_list?.[0];
-  if (!uploadInfo) {
-    throw new Error("获取上传凭证失败");
-  }
-
-  const { upload_url, upload_params } = uploadInfo;
-  
-  // 上传图片
-  const formData = new FormData();
-  Object.entries(upload_params || {}).forEach(([key, value]) => {
-    formData.append(key, value as string);
-  });
-  
-  const blob = new Blob([imageBuffer], { type: contentType });
-  formData.append('file', blob, 'image.jpg');
-
-  const uploadResponse = await fetch(upload_url, {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!uploadResponse.ok) {
-    throw new Error(`上传图片失败: ${uploadResponse.status}`);
-  }
-
-  const uploadResponseData = await uploadResponse.json() as any;
-  return uploadResponseData.data?.image_uri || uploadResponseData.image_uri || '';
-}
-
-/**
  * 获取历史记录（兼容旧接口）
  */
 export async function getHistoryBySubmitIds(
@@ -748,41 +930,10 @@ export async function getHistoryBySubmitIds(
   });
 
   const histories: any[] = [];
-
   for (const submitId of submitIds) {
-    const record = result[submitId];
-    if (!record) {
-      console.warn(`submit_id ${submitId} 的记录不存在`);
-      continue;
+    if (result[submitId]) {
+      histories.push(result[submitId]);
     }
-
-    const itemList = record.item_list || [];
-    const images = itemList.map((item: any) => {
-      const largeImage = item?.image?.large_images?.[0];
-      return {
-        id: item?.common_attr?.id || '',
-        imageUrl: largeImage?.image_url || item?.common_attr?.cover_url || '',
-        width: largeImage?.width || item?.common_attr?.cover_width || 0,
-        height: largeImage?.height || item?.common_attr?.cover_height || 0,
-        format: largeImage?.format || item?.image?.format || 'jpeg',
-        coverUrlMap: item?.common_attr?.cover_url_map || {},
-        description: item?.common_attr?.description || '',
-        referencePrompt: item?.aigc_image_params?.reference_prompt || '',
-      };
-    });
-
-    histories.push({
-      submitId,
-      status: record.status || 0,
-      failCode: record.fail_code,
-      failMsg: record.fail_msg,
-      generateType: record.generate_type || 1,
-      historyRecordId: record.history_record_id,
-      finishTime: record.finish_time,
-      totalImageCount: record.total_image_count || 0,
-      finishedImageCount: record.finished_image_count || 0,
-      images,
-    });
   }
 
   return histories;

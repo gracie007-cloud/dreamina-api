@@ -12,7 +12,8 @@ export async function createSignature(
   accessKeyId: string,
   secretAccessKey: string,
   sessionToken?: string,
-  payload: string = ''
+  payload: string = '',
+  awsRegion: string = 'us-east-1'
 ): Promise<string> {
   const urlObj = new URL(url);
   const pathname = urlObj.pathname || '/';
@@ -21,7 +22,7 @@ export async function createSignature(
   // 创建规范请求
   const timestamp = headers['x-amz-date'];
   const date = timestamp.substr(0, 8);
-  const region = 'us-east-1';  // 海外站使用 us-east-1
+  const region = awsRegion;
   const service = 'imagex';
   
   // 规范化查询参数

@@ -641,6 +641,16 @@ export const uiHtml = `<!DOCTYPE html>
               </select>
             </div>
           </div>
+
+          <div class="form-group">
+            <label>分辨率</label>
+            <select id="resolution">
+              <option value="1k">1K (1024×1024)</option>
+              <option value="2k" selected>2K (2048×2048) - 推荐</option>
+              <option value="4k">4K (4096×4096) - 高清</option>
+            </select>
+            <p class="hint">4K 分辨率生成时间更长，消耗积分更多</p>
+          </div>
           
           <div class="form-group">
             <label>图片比例</label>
@@ -682,7 +692,7 @@ export const uiHtml = `<!DOCTYPE html>
     </div>
     
     <footer class="footer">
-    <p>A嘉技术 | 项目 <a href="https://github.com/LiJunYi2/dreamina-api" target="_blank">Github</a></p>
+      <p>A嘉技术 | 项目 <a href="https://github.com/LiJunYi2/dreamina-api" target="_blank">Github</a></p>
       <p style="margin-top: 8px;">⚠️ 请合理使用，遵守相关法律法规</p>
     </footer>
   </div>
@@ -935,12 +945,14 @@ export const uiHtml = `<!DOCTYPE html>
       try {
         // 根据模式选择 API 端点
         const apiEndpoint = currentMode === 'img2img' ? '/v1/images/compositions' : '/v1/images/generations';
-        
+        const resolution = document.getElementById('resolution').value; // 新增
+
         // 构建请求体
         const requestBody = {
           prompt,
           model,
           ratio: selectedRatio,
+          resolution: resolution, // 新增
           negative_prompt: negativePrompt || undefined,
           sample_strength: sampleStrength
         };
